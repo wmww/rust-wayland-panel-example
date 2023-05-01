@@ -1,5 +1,6 @@
 use gtk4::prelude::*;
 use gtk4::{glib, Application, ApplicationWindow, Button};
+use gtk4_layer_shell;
 
 const APP_ID: &str = "me.phie.phie-shell";
 
@@ -21,6 +22,9 @@ fn activate(app: &Application) {
         .title("Phie Shell")
         .child(&button)
         .build();
+
+    gtk4_layer_shell::init_for_window(&window);
+    gtk4_layer_shell::set_anchor(&window, gtk4_layer_shell::Edge::Bottom, true);
 
     window.present();
 }
