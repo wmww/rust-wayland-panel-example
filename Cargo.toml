@@ -9,3 +9,4 @@ gtk4-layer-shell = "^0.0.3"
 gdk4-wayland = { version = "^0.6.3", features = [ "wayland_crate" ] }
 wayland-client = "^0.30.1"
 wayland-protocols-wlr = { version = "^0.1.0", features = [ "client" ] }
+slotmap = "^1.0.6"
