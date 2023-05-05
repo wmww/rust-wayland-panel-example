@@ -177,7 +177,7 @@ impl Dispatch<ZwlrForeignToplevelHandleV1, Mutex<Option<ToplevelKey>>> for Wayla
                     .listener
                     .as_mut()
                     .unwrap()
-                    .updated(&toplevel.title, &toplevel.title);
+                    .updated(&toplevel.title, &toplevel.app_id);
             }
             zwlr_foreign_toplevel_handle_v1::Event::Closed {} => {
                 let mut data = state.0.borrow_mut();
