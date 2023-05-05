@@ -1,92 +1,55 @@
-use gtk4::prelude::*;
-use gtk4::{glib, Button};
-use std::os::fd::AsRawFd;
-use wayland_client::{protocol::wl_registry, Proxy};
-use wayland_protocols_wlr::foreign_toplevel::v1::client::{
-    zwlr_foreign_toplevel_handle_v1, zwlr_foreign_toplevel_manager_v1,
-};
+mod toplevels;
+mod wayland;
 
-struct AppData {
+use gtk4::{glib, prelude::*, Button, Orientation, Widget};
+use std::os::fd::AsRawFd;
+use toplevels::{ToplevelController, ToplevelListListener, ToplevelListener};
+use wayland_client::Proxy;
+
+pub struct Taskbar {
+    root: gtk4::Box,
+}
+
+impl Taskbar {
+    pub fn new() -> Self {
+        let root = gtk4::Box::new(Orientation::Horizontal, 20);
+        Self { root }
+    }
+
+    pub fn widget(&self) -> &Widget {
+        self.root.upcast_ref()
+    }
+}
+
+impl ToplevelListListener for Taskbar {
+    fn created(&mut self, controller: Box<dyn ToplevelController>) -> Box<dyn ToplevelListener> {
+        let button = Button::builder().build();
+        let controller = std::cell::RefCell::new(controller);
+        button.connect_clicked(move |_button| {
+            controller.borrow_mut().focus();
+        });
+        self.root.append(&button);
+        Box::new(TaskbarItem { button })
+    }
+}
+
+struct TaskbarItem {
     button: Button,
 }
 
-impl wayland_client::Dispatch<wl_registry::WlRegistry, wayland_client::globals::GlobalListContents>
-    for AppData
-{
-    fn event(
-        _: &mut Self,
-        _: &wl_registry::WlRegistry,
-        _: wl_registry::Event,
-        _: &wayland_client::globals::GlobalListContents,
-        _: &wayland_client::Connection,
-        _: &wayland_client::QueueHandle<AppData>,
-    ) {
+impl ToplevelListener for TaskbarItem {
+    fn updated(&mut self, title: &str, _app_id: &str) {
+        self.button.set_label(title);
     }
-}
-
-impl wayland_client::Dispatch<zwlr_foreign_toplevel_manager_v1::ZwlrForeignToplevelManagerV1, ()>
-    for AppData
-{
-    fn event(
-        _: &mut Self,
-        _: &zwlr_foreign_toplevel_manager_v1::ZwlrForeignToplevelManagerV1,
-        _: zwlr_foreign_toplevel_manager_v1::Event,
-        _: &(),
-        _: &wayland_client::Connection,
-        _: &wayland_client::QueueHandle<AppData>,
-    ) {
-    }
-
-    wayland_client::event_created_child!(Self, zwlr_foreign_toplevel_handle_v1::ZwlrForeignToplevelHandleV1, [
-        zwlr_foreign_toplevel_manager_v1::EVT_TOPLEVEL_OPCODE => (zwlr_foreign_toplevel_handle_v1::ZwlrForeignToplevelHandleV1, ())
-    ]);
-}
-
-impl wayland_client::Dispatch<zwlr_foreign_toplevel_handle_v1::ZwlrForeignToplevelHandleV1, ()>
-    for AppData
-{
-    fn event(
-        data: &mut Self,
-        _registry: &zwlr_foreign_toplevel_handle_v1::ZwlrForeignToplevelHandleV1,
-        event: zwlr_foreign_toplevel_handle_v1::Event,
-        _: &(),
-        _: &wayland_client::Connection,
-        _qh: &wayland_client::QueueHandle<AppData>,
-    ) {
-        match event {
-            zwlr_foreign_toplevel_handle_v1::Event::Title { title } => {
-                println!("toplevel: {}", title);
-                data.button.set_label(&title);
-            }
-            _ => (),
-        }
-    }
+    fn closed(&mut self) {}
 }
 
 fn main() {
     gtk4::init().unwrap();
 
-    let button = Button::builder()
-        .label("Press me!")
-        .margin_top(12)
-        .margin_bottom(12)
-        .margin_start(12)
-        .margin_end(12)
-        .build();
-
-    button.connect_clicked(|button| {
-        button.set_label("Hello World!");
-    });
-
-    let window = gtk4::Window::new();
-    window.set_title("Phie Shell".into());
-    window.set_child(Some(&button));
-    gtk4_layer_shell::init_for_window(&window);
-    gtk4_layer_shell::set_anchor(&window, gtk4_layer_shell::Edge::Bottom, true);
-    window.show();
-
-    let gdk_wayland_display = gtk4::gdk::Display::default()
-        .unwrap()
+    let gdk_display = gtk4::gdk::Display::default().unwrap();
+    let gdk_wayland_display = gdk_display
+        .clone()
         .downcast::<gdk4_wayland::WaylandDisplay>()
         .unwrap();
     let wl_display = gdk_wayland_display.wl_display().unwrap();
@@ -94,28 +57,14 @@ fn main() {
     let connection = wayland_client::Connection::from_backend(unsafe {
         wayland_client::backend::Backend::from_foreign_display(wl_display_ptr as _)
     });
-    /*let mut event_queue = conn.new_event_queue();
-    let qh = event_queue.handle();
-    println!("getting registry");
-    let _registry = wl_display.get_registry(&qh, ());
-
-    let mut app_data = AppData::new();
-    event_queue.roundtrip(&mut app_data).unwrap();
-    event_queue.roundtrip(&mut app_data).unwrap();
-    println!("roundtrip done");
-    */
-    let (globals, mut event_queue) =
-        wayland_client::globals::registry_queue_init::<AppData>(&connection).unwrap();
-    let qh = event_queue.handle();
-    let _manager = globals
-        .bind::<zwlr_foreign_toplevel_manager_v1::ZwlrForeignToplevelManagerV1, _, _>(
-            &qh,
-            core::ops::RangeInclusive::new(1, 1),
-            (),
-        )
+    let gdk_wayland_seat = gdk_display
+        .default_seat()
+        .unwrap()
+        .downcast::<gdk4_wayland::WaylandSeat>()
         .unwrap();
-    let mut app_data = AppData { button };
-    //event_queue.roundtrip(&mut app_data).unwrap();
+    let wl_seat = gdk_wayland_seat.wl_seat().unwrap();
+
+    let (mut event_queue, mut state) = wayland::init(&connection, wl_seat, Box::new(taskbar));
 
     // This code is from https://github.com/Smithay/wayland-rs/pull/572/files, I don't know how it works'
     let fd = connection
@@ -128,8 +77,15 @@ fn main() {
         glib::Continue(true)
     });
 
+    let window = gtk4::Window::new();
+    let taskbar = Taskbar::new();
+    window.set_child(Some(taskbar.widget()));
+    gtk4_layer_shell::init_for_window(&window);
+    gtk4_layer_shell::set_anchor(&window, gtk4_layer_shell::Edge::Bottom, true);
+    window.show();
+
     glib::MainContext::default().spawn_local(async move {
-        std::future::poll_fn(|cx| event_queue.poll_dispatch_pending(cx, &mut app_data))
+        std::future::poll_fn(|cx| event_queue.poll_dispatch_pending(cx, &mut state))
             .await
             .unwrap();
     });
